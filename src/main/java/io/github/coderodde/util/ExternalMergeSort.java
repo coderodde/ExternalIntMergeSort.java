@@ -2,7 +2,6 @@ package io.github.coderodde.util;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.FileInputStream;
@@ -60,7 +59,7 @@ public class ExternalMergeSort {
         
         long freeMem = Runtime.getRuntime().freeMemory();
         long memThreshold = (3 * freeMem) / 4;
-        long inputFileSize;
+        long inputFileSize; 
         
         try {
             inputFileSize = getInputFileSize(inputPath);
@@ -71,13 +70,17 @@ public class ExternalMergeSort {
                     ex);
         }
         
-        inputFileSize = normalizeInputFileSize(inputFileSize);
+        if (inputFileSize % Integer.BYTES != 0) {
+            throw new RuntimeException(
+                    "The number of bytes in the input file is not divisible " + 
+                    "by 4.");
+        }
         
         try {
             if (inputFileSize < memThreshold) {
                 sortInMainMemory(inputPath, 
                                  outputPath, 
-                                 (int) inputFileSize);
+                                 (int) (inputFileSize / Integer.BYTES));
                 return;
             }
         } catch (IOException ex) {
@@ -96,6 +99,99 @@ public class ExternalMergeSort {
                                        Path outputPath,
                                        long inputFileSize) {
         
+        Path temporaryDirectory;
+        
+        try {
+            temporaryDirectory = Files.createTempDirectory("ext-merge-int32");
+        } catch (IOException ex) {
+            throw new RuntimeException(
+                "Could not create a temporary directory: " + ex.getMessage(),
+                ex);
+        }
+        
+        List<Path> runs;
+        
+        try {
+            runs = createSortedRuns(inputPath, 
+                                    temporaryDirectory,
+                                    1000000);
+        } catch (IOException ex) {
+            throw new RuntimeException(
+                    "createSortedRuns failed: " + ex.getMessage(), ex);
+        }
+        
+        try {
+            mergeRuns(runs, outputPath);
+        } catch (IOException ex) {
+            throw new RuntimeException(
+                    "mergeRuns failed: " + ex.getMessage(), ex);
+        }
+        
+        for (Path p : runs) {
+            try {
+                Files.deleteIfExists(p);
+            } catch (IOException ignored) {
+                
+            }
+        }
+        
+        try {
+            Files.deleteIfExists(temporaryDirectory);
+        } catch (IOException ignored) {
+            
+        }
+    }
+    
+    private static List<Path> 
+        createSortedRuns(Path inputPath, 
+                         Path temporaryPath,
+                         int maxIntsInMem) throws IOException {
+        
+            List<Path> runPaths = new ArrayList<>();
+            
+            int[] buffer = new int[maxIntsInMem];
+            int runIndex = 0;
+            
+            try (DataInputStream in = 
+                    new DataInputStream(
+                            new BufferedInputStream(
+                                    Files.newInputStream(inputPath)))) {
+                
+                while (true) {
+                    int count = 0;
+                    
+                    for (; count < maxIntsInMem; ++count) {
+                        buffer[count] = in.readInt();
+                    }
+                    
+                    if (count == 0) {
+                        break;
+                    }
+                    
+                    Arrays.sort(buffer);
+                    
+                    Path runFile = 
+                            temporaryPath
+                                    .resolve("run-" + (runIndex++) + ".bin");
+                    
+                    try (DataOutputStream out = 
+                        new DataOutputStream(
+                            new BufferedOutputStream(
+                                Files.newOutputStream(
+                                    runFile, 
+                                    StandardOpenOption.CREATE, 
+                                    StandardOpenOption.TRUNCATE_EXISTING)))) {
+                        
+                        for (int i = 0; i < count; ++i) {
+                            out.writeInt(buffer[i]);
+                        }
+                    }
+                    
+                    runPaths.add(runFile);
+                }
+            }
+            
+            return runPaths;
     }
     
     private static void mergeRuns(List<Path> inputPaths, Path outputPath) 
@@ -192,6 +288,15 @@ public class ExternalMergeSort {
         return Files.size(inputPath);
     }
     
+    /**
+     * Sorts the input file in the main memory delegating to 
+     * {@link Arrays#sort(int[])}.
+     * 
+     * @param inputPath    the source file path to be sorted.
+     * @param outputPath   the target file path.
+     * @param capacity     the number of {@code int} keys in {@code inputPath}.
+     * @throws IOException if I/O fails.
+     */
     private static void sortInMainMemory(Path inputPath,
                                          Path outputPath,
                                          int capacity) 
