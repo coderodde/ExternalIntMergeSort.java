@@ -25,15 +25,15 @@ import java.util.Queue;
  * This class provides a method for external sorting a binary file containing 
  * {@code int} values in little-endian order.
  */
-public class ExternalMergeSort {
+public class ExternalIntMergeSort {
     
     private static final class HeapEntry {
         final int key;
-        final int readerIndex;
+        final int streamIndex;
         
-        HeapEntry(int key, int readerIndex) {
+        HeapEntry(int key, int streamIndex) {
             this.key = key;
-            this.readerIndex = readerIndex;
+            this.streamIndex = streamIndex;
         }
     }
     
@@ -233,8 +233,8 @@ public class ExternalMergeSort {
             while (!q.isEmpty()) {
                 HeapEntry e = q.poll();
                 out.writeInt(e.key);
-                int next = streams[e.readerIndex].readInt();
-                q.add(new HeapEntry(next, e.readerIndex));
+                int next = streams[e.streamIndex].readInt();
+                q.add(new HeapEntry(next, e.streamIndex));
             }
             
         } finally {
