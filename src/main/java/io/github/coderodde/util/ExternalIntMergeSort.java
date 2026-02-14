@@ -1,9 +1,7 @@
 package io.github.coderodde.util;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -25,15 +23,21 @@ import java.util.Queue;
  * This class provides a method for external sorting a binary file containing 
  * {@code int} values in little-endian order.
  */
-public class ExternalIntMergeSort {
+public final class ExternalIntMergeSort {
+    
+    private static final int BUFFER_SIZE = 64 * 1024;
+    
+    private ExternalIntMergeSort() {
+        
+    }
     
     private static final class HeapEntry {
         final int key;
-        final int streamIndex;
+        final int runIndex;
         
-        HeapEntry(int key, int streamIndex) {
+        HeapEntry(int key, int runIndex) {
             this.key = key;
-            this.streamIndex = streamIndex;
+            this.runIndex = runIndex;
         }
     }
     
@@ -50,15 +54,6 @@ public class ExternalIntMergeSort {
                             + "\" does not exist.");
         }
         
-        if (!Files.exists(outputPath)) {
-            throw new RuntimeException(
-                    "Output file \"" 
-                            + outputPath.getFileName() 
-                            + "\" does not exist.");
-        }
-        
-        long freeMem = Runtime.getRuntime().freeMemory();
-        long memThreshold = (3 * freeMem) / 4;
         long inputFileSize; 
         
         try {
@@ -76,11 +71,24 @@ public class ExternalIntMergeSort {
                     "by 4.");
         }
         
+        if (!Files.exists(outputPath)) {
+            throw new RuntimeException(
+                    "Output file \"" 
+                            + outputPath.getFileName() 
+                            + "\" does not exist.");
+        }
+        
+        long freeMem = Runtime.getRuntime().freeMemory();
+        long memThreshold = (3L * freeMem) / 4L;
+        
+        
         try {
-            if (inputFileSize < memThreshold) {
+            // TODO: inputFileSize >= Integer.MAX_VALUE -> extenral sort!
+            if (inputFileSize <= memThreshold) {
                 sortInMainMemory(inputPath, 
                                  outputPath, 
                                  (int) (inputFileSize / Integer.BYTES));
+                
                 return;
             }
         } catch (IOException ex) {
@@ -93,6 +101,8 @@ public class ExternalIntMergeSort {
         sortExternally(inputPath,
                        outputPath,
                        inputFileSize);
+        
+        System.gc();
     }
     
     private static void sortExternally(Path inputPath,
@@ -152,48 +162,80 @@ public class ExternalIntMergeSort {
             int[] buffer = new int[maxIntsInMem];
             int runIndex = 0;
             
-            try (DataInputStream in = 
-                    new DataInputStream(
-                            new BufferedInputStream(
-                                    Files.newInputStream(inputPath)))) {
+            try (FileChannel in = 
+                    FileChannel.open(inputPath, StandardOpenOption.READ)) {
                 
+                ByteBuffer bb = 
+                    ByteBuffer.allocateDirect(maxIntsInMem * Integer.BYTES);
+                
+                bb.order(ByteOrder.LITTLE_ENDIAN);
+               
                 while (true) {
-                    int count = 0;
+                    bb.clear();
+                    int bytesReadTotal = 0;
                     
-                    for (; count < maxIntsInMem; ++count) {
-                        buffer[count] = in.readInt();
+                    while (bb.hasRemaining()) {
+                        int r = in.read(bb);
+                        
+                        if (r == -1) {
+                            break;
+                        }
+                        
+                        bytesReadTotal += r;
                     }
                     
-                    if (count == 0) {
+                    if (bytesReadTotal == 0) {
+                        // TODO: Do I need this?
                         break;
                     }
                     
-                    Arrays.sort(buffer);
+                    bb.flip();
+                    
+                    int intsRead = bytesReadTotal / Integer.BYTES;
+                    
+                    for (int i = 0; i < intsRead; ++i) {
+                        buffer[i] = bb.getInt();
+                    }
+                    
+                    Arrays.sort(buffer, 0, intsRead);
                     
                     Path runFile = 
-                            temporaryPath
-                                    .resolve("run-" + (runIndex++) + ".bin");
+                        temporaryPath.resolve("run-" + (runIndex++) + ".bin");
                     
-                    try (DataOutputStream out = 
-                        new DataOutputStream(
-                            new BufferedOutputStream(
-                                Files.newOutputStream(
-                                    runFile, 
-                                    StandardOpenOption.CREATE, 
-                                    StandardOpenOption.TRUNCATE_EXISTING)))) {
+                    try (FileChannel out = 
+                         FileChannel.open(runFile, 
+                                          StandardOpenOption.CREATE, 
+                                          StandardOpenOption.TRUNCATE_EXISTING, 
+                                          StandardOpenOption.WRITE)) {
                         
-                        for (int i = 0; i < count; ++i) {
-                            out.writeInt(buffer[i]);
+                        ByteBuffer outBuffer = 
+                            ByteBuffer.allocateDirect(intsRead * Integer.BYTES);
+                        
+                        outBuffer.order(ByteOrder.LITTLE_ENDIAN);
+                        
+                        for (int i = 0; i < intsRead; ++i) {
+                            outBuffer.putInt(buffer[i]);
+                        }
+                        
+                        outBuffer.flip();
+                        
+                        while (outBuffer.hasRemaining()) {
+                            out.write(outBuffer);
                         }
                     }
                     
                     runPaths.add(runFile);
+                    
+                    if (bytesReadTotal < maxIntsInMem * Integer.BYTES) {
+                        // TODO: Do I need this?
+                        break;
+                    }
                 }
             }
             
             return runPaths;
-    }
-    
+        }
+         
     private static void mergeRuns(List<Path> inputPaths, Path outputPath) 
             throws IOException {
         
@@ -205,44 +247,86 @@ public class ExternalIntMergeSort {
             return;
         }
         
-        DataInputStream[] streams = new DataInputStream[inputPaths.size()];
+        FileChannel[] channels = new FileChannel[inputPaths.size()];
+        ByteBuffer[]  buffers  = new ByteBuffer [inputPaths.size()];
         
-        int i = 0;
-        
-        for (Path p : inputPaths) {
-            streams[i++] =
-                    new DataInputStream(
-                            new BufferedInputStream(Files.newInputStream(p)));
-        }
-        
-        Queue<HeapEntry> q = 
+        Queue<HeapEntry> heap =
                 new PriorityQueue<>(Comparator.comparingInt(e -> e.key));
         
-        for (i = 0; i < streams.length; ++i) {
-            q.add(new HeapEntry(streams[i].readInt(), i));
-        }
+        int[] temp = new int[1];
         
-        try (DataOutputStream out =
-                new DataOutputStream(
-                        new BufferedOutputStream(
-                            Files.newOutputStream(
-                                    outputPath, 
-                                    StandardOpenOption.CREATE, 
-                                    StandardOpenOption.TRUNCATE_EXISTING)))) {
-            
-            while (!q.isEmpty()) {
-                HeapEntry e = q.poll();
-                out.writeInt(e.key);
-                int next = streams[e.streamIndex].readInt();
-                q.add(new HeapEntry(next, e.streamIndex));
+        try {
+            for (int i = 0; i < inputPaths.size(); ++i) {
+                channels[i] = 
+                    FileChannel.open(inputPaths.get(i),
+                                     StandardOpenOption.READ);
+                
+                buffers[i] = ByteBuffer.allocateDirect(BUFFER_SIZE);
+                buffers[i].order(ByteOrder.LITTLE_ENDIAN);
+                buffers[i].limit(0);
+                
+                boolean fine = readNextInt(channels[i],
+                                           buffers[i],
+                                           temp, 
+                                           0);
+                
+                
+                if (fine) {
+                    heap.add(new HeapEntry(temp[0], i));
+                }
             }
             
-        } finally {
-            for (DataInputStream s : streams) {
-                try {
-                    s.close();
-                } catch (IOException ignored) {
+            try (FileChannel out = 
+                 FileChannel.open(outputPath, 
+                                  StandardOpenOption.CREATE, 
+                                  StandardOpenOption.TRUNCATE_EXISTING, 
+                                  StandardOpenOption.WRITE)) {
+                
+                ByteBuffer outBuffer = ByteBuffer.allocateDirect(BUFFER_SIZE);
+                
+                outBuffer.order(ByteOrder.LITTLE_ENDIAN);
+                
+                while (!heap.isEmpty()) {
+                    HeapEntry e = heap.poll();
                     
+                    if (outBuffer.remaining() < Integer.BYTES) {
+                        outBuffer.flip();
+                        
+                        while (outBuffer.hasRemaining()) {
+                            out.write(outBuffer);
+                        }
+                        
+                        outBuffer.clear();
+                    }
+                    
+                    outBuffer.putInt(e.key);
+                    
+                    boolean fine = readNextInt(channels[e.runIndex],
+                                               buffers [e.runIndex], 
+                                               temp, 
+                                               0);
+                    
+                    if (fine) {
+                        heap.add(new HeapEntry(temp[0], e.runIndex));
+                    } 
+                }
+                
+                outBuffer.flip();
+                
+                while (outBuffer.hasRemaining()) {
+                    out.write(outBuffer);
+                }
+            }
+            
+            
+        } finally {
+            for (FileChannel channel : channels) {
+                if (channel != null) {
+                    try {
+                        channel.close();
+                    } catch (IOException ignored) {
+                        
+                    }
                 }
             }
         }
@@ -303,15 +387,15 @@ public class ExternalIntMergeSort {
         throws IOException {
         
         try (FileChannel inputChannel = 
-                FileChannel.open(inputPath, StandardOpenOption.READ);
+             FileChannel.open(inputPath, StandardOpenOption.READ);
                 
              FileChannel outputChannel =
-                FileChannel.open(outputPath,
+             FileChannel.open(outputPath,
                                  StandardOpenOption.CREATE,
                                  StandardOpenOption.TRUNCATE_EXISTING,
                                  StandardOpenOption.WRITE)) {
             
-            ByteBuffer buffer = ByteBuffer.allocate(capacity);
+            ByteBuffer buffer = ByteBuffer.allocate(capacity * Integer.BYTES);
             buffer.order(ByteOrder.LITTLE_ENDIAN);
             
             while (buffer.hasRemaining()) {
@@ -350,5 +434,32 @@ public class ExternalIntMergeSort {
     
     private static long normalizeInputFileSize(long inputFileSize) {
         return Long.min(inputFileSize, Integer.MAX_VALUE);
+    }
+    
+    private static boolean readNextInt(FileChannel channel,
+                                       ByteBuffer buffer,
+                                       int[] out,
+                                       int index) throws IOException {
+        while (buffer.remaining() < Integer.BYTES) {
+            buffer.compact();
+            int r = channel.read(buffer);
+            
+            buffer.flip();
+            
+            if (r == -1) {
+                return false;
+            }
+            
+            if (buffer.remaining() < Integer.BYTES && r == 0) {
+                continue;
+            }
+            
+            if (buffer.remaining() < Integer.BYTES) {
+                return false;
+            }
+        }
+        
+        out[index] = buffer.getInt();
+        return true;
     }
 }
