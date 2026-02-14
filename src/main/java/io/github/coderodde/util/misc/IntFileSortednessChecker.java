@@ -20,9 +20,10 @@ public final class IntFileSortednessChecker {
         try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
 
             long size = ch.size();
-//            if ((size % Integer.BYTES) != 0) {
-//                throw new IllegalArgumentException("File size not divisible by 4: " + size);
-//            }
+            
+            if ((size % Integer.BYTES) != 0) {
+                throw new IllegalArgumentException("File size not divisible by 4: " + size);
+            }
 
             ByteBuffer bb = ByteBuffer.allocateDirect(BUF_BYTES);
             bb.order(ByteOrder.LITTLE_ENDIAN);
@@ -68,11 +69,13 @@ public final class IntFileSortednessChecker {
     // CLI usage: java CheckSortedInt32LE <path>
     public static void main(String[] args) throws Exception {
         if (args.length != 1) {
-            System.err.println("Usage: java CheckSortedInt32LE <path-to-file>");
+            System.err.println("Usage: java -jar APP.jar <path-to-file>");
             System.exit(2);
         }
+        
         Path p = Path.of(args[0]);
         long inv = firstInversionIndex(p);
+        
         if (inv == -1) {
             System.out.println("SORTED");
         } else {
