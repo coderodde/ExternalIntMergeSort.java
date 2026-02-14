@@ -12,8 +12,8 @@
             <properties>
                 <exec.vmArgs></exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs></exec.appArgs>
-                <exec.mainClass>io.github.coderodde.util.benchmark.LargeFileCreator</exec.mainClass>
+                <exec.appArgs>C:\Users\rodio\Downloads\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG.mp4</exec.appArgs>
+                <exec.mainClass>io.github.coderodde.util.misc.IntFileSortednessChecker</exec.mainClass>
                 <exec.executable>java</exec.executable>
             </properties>
         </action>
@@ -29,8 +29,8 @@
             <properties>
                 <exec.vmArgs>-agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs></exec.appArgs>
-                <exec.mainClass>io.github.coderodde.util.benchmark.LargeFileCreator</exec.mainClass>
+                <exec.appArgs>C:\Users\rodio\Downloads\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG.mp4</exec.appArgs>
+                <exec.mainClass>io.github.coderodde.util.misc.IntFileSortednessChecker</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
             </properties>
@@ -47,9 +47,9 @@
             <properties>
                 <exec.vmArgs></exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.mainClass>io.github.coderodde.util.benchmark.LargeFileCreator</exec.mainClass>
+                <exec.mainClass>io.github.coderodde.util.misc.IntFileSortednessChecker</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.appArgs></exec.appArgs>
+                <exec.appArgs>C:\Users\rodio\Downloads\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG\The.Ninth.Gate.1999.1080p.BluRay.x264.AAC-ETRG.mp4</exec.appArgs>
             </properties>
         </action>
     </actions>
