@@ -1,9 +1,5 @@
 package io.github.coderodde.util;
 
-import java.io.BufferedInputStream;
-import java.io.DataInputStream;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -71,13 +67,6 @@ public final class ExternalIntMergeSort {
                     "by 4.");
         }
         
-        if (!Files.exists(outputPath)) {
-            throw new RuntimeException(
-                    "Output file \"" 
-                            + outputPath.getFileName() 
-                            + "\" does not exist.");
-        }
-        
         long freeMem = Runtime.getRuntime().freeMemory();
         long memThreshold = (3L * freeMem) / 4L;
         
@@ -101,8 +90,6 @@ public final class ExternalIntMergeSort {
         sortExternally(inputPath,
                        outputPath,
                        inputFileSize);
-        
-        System.gc();
     }
     
     private static void sortExternally(Path inputPath,
@@ -122,9 +109,11 @@ public final class ExternalIntMergeSort {
         List<Path> runs;
         
         try {
+            int memorySize = computeMaximumIntsInMemory();
+            
             runs = createSortedRuns(inputPath, 
                                     temporaryDirectory,
-                                    1000000);
+                                    memorySize);
         } catch (IOException ex) {
             throw new RuntimeException(
                     "createSortedRuns failed: " + ex.getMessage(), ex);
@@ -151,90 +140,6 @@ public final class ExternalIntMergeSort {
             
         }
     }
-    
-    private static List<Path> 
-        createSortedRuns(Path inputPath, 
-                         Path temporaryPath,
-                         int maxIntsInMem) throws IOException {
-        
-            List<Path> runPaths = new ArrayList<>();
-            
-            int[] buffer = new int[maxIntsInMem];
-            int runIndex = 0;
-            
-            try (FileChannel in = 
-                    FileChannel.open(inputPath, StandardOpenOption.READ)) {
-                
-                ByteBuffer bb = 
-                    ByteBuffer.allocateDirect(maxIntsInMem * Integer.BYTES);
-                
-                bb.order(ByteOrder.LITTLE_ENDIAN);
-               
-                while (true) {
-                    bb.clear();
-                    int bytesReadTotal = 0;
-                    
-                    while (bb.hasRemaining()) {
-                        int r = in.read(bb);
-                        
-                        if (r == -1) {
-                            break;
-                        }
-                        
-                        bytesReadTotal += r;
-                    }
-                    
-                    if (bytesReadTotal == 0) {
-                        // TODO: Do I need this?
-                        break;
-                    }
-                    
-                    bb.flip();
-                    
-                    int intsRead = bytesReadTotal / Integer.BYTES;
-                    
-                    for (int i = 0; i < intsRead; ++i) {
-                        buffer[i] = bb.getInt();
-                    }
-                    
-                    Arrays.sort(buffer, 0, intsRead);
-                    
-                    Path runFile = 
-                        temporaryPath.resolve("run-" + (runIndex++) + ".bin");
-                    
-                    try (FileChannel out = 
-                         FileChannel.open(runFile, 
-                                          StandardOpenOption.CREATE, 
-                                          StandardOpenOption.TRUNCATE_EXISTING, 
-                                          StandardOpenOption.WRITE)) {
-                        
-                        ByteBuffer outBuffer = 
-                            ByteBuffer.allocateDirect(intsRead * Integer.BYTES);
-                        
-                        outBuffer.order(ByteOrder.LITTLE_ENDIAN);
-                        
-                        for (int i = 0; i < intsRead; ++i) {
-                            outBuffer.putInt(buffer[i]);
-                        }
-                        
-                        outBuffer.flip();
-                        
-                        while (outBuffer.hasRemaining()) {
-                            out.write(outBuffer);
-                        }
-                    }
-                    
-                    runPaths.add(runFile);
-                    
-                    if (bytesReadTotal < maxIntsInMem * Integer.BYTES) {
-                        // TODO: Do I need this?
-                        break;
-                    }
-                }
-            }
-            
-            return runPaths;
-        }
          
     private static void mergeRuns(List<Path> inputPaths, Path outputPath) 
             throws IOException {
@@ -332,42 +237,122 @@ public final class ExternalIntMergeSort {
         }
     }
     
-    private static List<Path> createSortedRuns(Path input,
-                                               int maximumIntsInMemory) {
+    private static int computeMaximumIntsInMemory() {
+        long max   = Runtime.getRuntime().maxMemory();    // heap limit
+        long total = Runtime.getRuntime().totalMemory(); // currently committed heap
+        long free  = Runtime.getRuntime().freeMemory();   // free within committed heap
+
+        // Heap we can still grow into:
+        long heapAvailable = (max - total) + free;
+
+        // Spend, say, 50% of available heap on the int[].
+        // (Input buffer is direct memory; still keep headroom.)
+        long bytesForIntArray = heapAvailable / 2;
+
+        long ints = bytesForIntArray / Integer.BYTES;
+
+        // Some sanity caps:
+        ints = Math.min(ints, 20_000_000L); // e.g. cap at 20M (~80MB int[])
+        ints = Math.max(ints, 1_000_000L);  // ensure not too tiny
+
+        return (int) Math.min(ints, Integer.MAX_VALUE);
+    }
+
+    private static List<Path> createSortedRuns(Path inputPath,
+                                               Path temporaryPath,
+                                               int maximumIntsInMemory) throws IOException {
         List<Path> runs = new ArrayList<>();
+        int[] array = new int[maximumIntsInMemory];
+        int runIndex = 0;
         
-        try (DataInputStream in = 
-                new DataInputStream(
-                        new BufferedInputStream(
-                                new FileInputStream(input.toFile())))) {
+        try (FileChannel in = 
+             FileChannel.open(inputPath, StandardOpenOption.READ)) {
             
-            long heapBytesFree = Runtime.getRuntime().freeMemory();
+            ByteBuffer inputBuffer = 
+                ByteBuffer.allocateDirect(maximumIntsInMemory * Integer.BYTES);
             
-            int[] buffer = new int[maximumIntsInMemory];
-            int end = 0;
+            ByteBuffer outputBuffer = ByteBuffer.allocateDirect(BUFFER_SIZE);
             
-            for (; end < maximumIntsInMemory; ++end) {
-                buffer[end] = in.readInt();
-            }
+            inputBuffer .order(ByteOrder.LITTLE_ENDIAN);
+            outputBuffer.order(ByteOrder.LITTLE_ENDIAN);
             
-            if (end == 0)  {
+            while (true) {
+                inputBuffer.clear();
                 
+                int bytesReadTotal = 0;
+                
+                while (inputBuffer.hasRemaining()) {
+                    int r = in.read(inputBuffer);
+                    
+                    if (r == -1) {
+                        break;
+                    }
+                    
+                    if (r == 0) {
+                        continue;
+                    }
+                    
+                    bytesReadTotal += r;
+                }
+                
+                if (bytesReadTotal == 0) {
+                    break;
+                }
+                
+                inputBuffer.flip();
+                
+                int intsRead = bytesReadTotal / Integer.BYTES;
+                
+                for (int i = 0; i < intsRead; ++i) {
+                    array[i] = inputBuffer.getInt();
+                }
+                
+                Arrays.sort(array, 0, intsRead);
+                
+                Path runFile = 
+                        temporaryPath.resolve("run-" + (runIndex++) + ".bin");
+                
+                try (FileChannel out = 
+                     FileChannel.open(runFile,
+                                      StandardOpenOption.CREATE,
+                                      StandardOpenOption.TRUNCATE_EXISTING, 
+                                      StandardOpenOption.WRITE)) {
+                    
+                    outputBuffer.clear();
+                    
+                    for (int i = 0; i < intsRead; ++i) {
+                        if (outputBuffer.remaining() < Integer.BYTES) {
+                            outputBuffer.flip();
+                            
+                            while (outputBuffer.hasRemaining()) {
+                                out.write(outputBuffer);
+                            }
+                            
+                            outputBuffer.clear();
+                        }
+                        
+                        outputBuffer.putInt(array[i]);
+                    }
+                    
+                    outputBuffer.flip();
+                    
+                    while (outputBuffer.hasRemaining()) {
+                        out.write(outputBuffer);
+                    }
+                }
+                
+                runs.add(runFile);
+                
+                if (bytesReadTotal < 
+                        maximumIntsInMemory * (long) Integer.BYTES) {
+                    break;
+                }
             }
-            
-        } catch (FileNotFoundException ex) {
-            throw new RuntimeException(
-                    "File not found: " + ex.getMessage(), ex);
-        } catch (IOException ex) {
-            throw new RuntimeException("IO exception: " + ex.getMessage(), ex);
         }
         
         return runs;
     }
 
-    public static void main(String[] args) {
-        System.out.println("Hello World!");
-    }
-    
     private static long getInputFileSize(Path inputPath) throws IOException {
         return Files.size(inputPath);
     }
@@ -442,16 +427,17 @@ public final class ExternalIntMergeSort {
                                        int index) throws IOException {
         while (buffer.remaining() < Integer.BYTES) {
             buffer.compact();
-            int r = channel.read(buffer);
+            
+            int r;
+            
+            do {
+                r = channel.read(buffer);
+            } while (r == 0);
             
             buffer.flip();
             
             if (r == -1) {
                 return false;
-            }
-            
-            if (buffer.remaining() < Integer.BYTES && r == 0) {
-                continue;
             }
             
             if (buffer.remaining() < Integer.BYTES) {
