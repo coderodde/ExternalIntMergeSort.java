@@ -9,11 +9,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.PriorityQueue;
-import java.util.Queue;
 
 /**
  * This class provides a method for external sorting a binary file containing 
@@ -25,16 +22,6 @@ public final class ExternalIntMergeSort {
     
     private ExternalIntMergeSort() {
         
-    }
-    
-    private static final class HeapEntry {
-        final int key;
-        final int runIndex;
-        
-        HeapEntry(int key, int runIndex) {
-            this.key      = key;
-            this.runIndex = runIndex;
-        }
     }
     
     public static void sort(Path inputPath,
@@ -156,9 +143,7 @@ public final class ExternalIntMergeSort {
         FileChannel[] channels = new FileChannel[inputPaths.size()];
         ByteBuffer [] buffers  = new ByteBuffer [inputPaths.size()];
         
-        Queue<HeapEntry> heap =
-                new PriorityQueue<>(Comparator.comparingInt(e -> e.key));
-        
+        Heap heap  = new Heap();
         int[] temp = new int[1];
         
         try {
@@ -176,7 +161,7 @@ public final class ExternalIntMergeSort {
                             temp, 
                             0);
                 
-                heap.add(new HeapEntry(temp[0], i));
+                heap.insert(temp[0], i);
             }
             
             try (FileChannel out = 
@@ -190,7 +175,9 @@ public final class ExternalIntMergeSort {
                 outBuffer.order(ByteOrder.LITTLE_ENDIAN);
                 
                 while (!heap.isEmpty()) {
-                    HeapEntry e = heap.poll();
+                    int key = heap.topKey();
+                    int runIndex = heap.topRunIndex();
+                    heap.removeTop();
                     
                     if (outBuffer.remaining() < Integer.BYTES) {
                         outBuffer.flip();
@@ -202,15 +189,15 @@ public final class ExternalIntMergeSort {
                         outBuffer.clear();
                     }
                     
-                    outBuffer.putInt(e.key);
+                    outBuffer.putInt(key);
                     
-                    boolean fine = readNextInt(channels[e.runIndex],
-                                               buffers [e.runIndex], 
+                    boolean fine = readNextInt(channels[runIndex],
+                                               buffers [runIndex], 
                                                temp, 
                                                0);
                     
                     if (fine) {
-                        heap.add(new HeapEntry(temp[0], e.runIndex));
+                        heap.insert(temp[0], runIndex);
                     }
                 }
                  
