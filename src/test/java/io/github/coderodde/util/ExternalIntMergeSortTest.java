@@ -1,9 +1,12 @@
 package io.github.coderodde.util;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
@@ -12,6 +15,20 @@ import static org.junit.Assert.*;
 
 public class ExternalIntMergeSortTest {
 
+    @Test
+    public void sortLarger() throws IOException {
+        String inputFileName  = "C:\\Users\\rodio\\Downloads\\R-4.5.2-win.exe";
+        String outputFileName = "C:\\Temp\\sorted.test.bin";
+        
+        Path inputPath  = Path.of(inputFileName);
+        Path outputPath = Path.of(outputFileName);
+        
+        ExternalIntMergeSort.sort(inputPath, 
+                                  outputPath);
+        
+        assertTrue(isSorted(outputPath));
+    }
+    
     @Test
     public void sortInMainMemory() throws IOException {
         int[] array  = { 29, 8, 26 };
@@ -81,5 +98,62 @@ public class ExternalIntMergeSortTest {
 
             return result;
         }
+    }
+    
+    private static boolean isSorted(Path p) throws IOException {
+        int[] keys = readIntsFast(p);
+        
+        for (int i = 0; i < keys.length - 1; ++i) {
+            if (keys[i] > keys[i + 1]) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    public static int[] readIntsFast(Path path) throws IOException {
+        long size = Files.size(path);
+        
+        if ((size & 3L) != 0L) {
+            throw new IllegalArgumentException("File size is not multiple of 4 bytes: " + size);
+        }
+        
+        if (size > (long) Integer.MAX_VALUE * 4L) {
+            throw new IllegalArgumentException("File too large for int[]: " + size);
+        }
+
+        int n = (int) (size >>> 2);
+        int[] out = new int[n];
+
+        // 8–64 MiB is usually a good range; tune if you want.
+        final int CHUNK_BYTES = 16 * 1024 * 1024;
+        ByteBuffer bb = ByteBuffer.allocateDirect(
+                CHUNK_BYTES)
+                .order(ByteOrder.LITTLE_ENDIAN);
+
+        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
+            int outPos = 0;
+
+            while (outPos < n) {
+                bb.clear();
+
+                // Read up to CHUNK_BYTES, but avoid ending on non-4-byte boundary.
+                int maxBytes = Math.min(CHUNK_BYTES, (n - outPos) * 4);
+                bb.limit(maxBytes);
+
+                while (bb.hasRemaining()) {
+                    if (ch.read(bb) < 0) break;
+                }
+
+                bb.flip();
+                IntBuffer ib = bb.asIntBuffer();
+                int k = ib.remaining();
+                ib.get(out, outPos, k);
+                outPos += k;
+            }
+        }
+
+        return out;
     }
 }

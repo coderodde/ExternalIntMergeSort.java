@@ -70,7 +70,6 @@ public final class ExternalIntMergeSort {
         long freeMem = Runtime.getRuntime().freeMemory();
         long memThreshold = (3L * freeMem) / 4L;
         
-        
         try {
             // TODO: inputFileSize >= Integer.MAX_VALUE -> extenral sort!
             if (inputFileSize <= memThreshold) {
@@ -85,11 +84,15 @@ public final class ExternalIntMergeSort {
                     "IO failed in main memory sorting: " + ex.getMessage(),
                     ex);
         }
+       
+        System.out.println("external");
         
         // Once here, do the external sorting:
         sortExternally(inputPath,
                        outputPath,
                        inputFileSize);
+        
+        System.out.println("done");
     }
     
     private static void sortExternally(Path inputPath,
@@ -415,10 +418,6 @@ public final class ExternalIntMergeSort {
                 outputChannel.write(buffer);
             }
         }
-    }
-    
-    private static long normalizeInputFileSize(long inputFileSize) {
-        return Long.min(inputFileSize, Integer.MAX_VALUE);
     }
     
     private static boolean readNextInt(FileChannel channel,
