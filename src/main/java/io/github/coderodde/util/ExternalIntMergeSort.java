@@ -32,7 +32,7 @@ public final class ExternalIntMergeSort {
         final int runIndex;
         
         HeapEntry(int key, int runIndex) {
-            this.key = key;
+            this.key      = key;
             this.runIndex = runIndex;
         }
     }
@@ -72,7 +72,9 @@ public final class ExternalIntMergeSort {
         
         try {
             // TODO: inputFileSize >= Integer.MAX_VALUE -> extenral sort!
-            if (inputFileSize <= memThreshold) {
+            if (inputFileSize <= memThreshold &&
+                inputFileSize <= Integer.MAX_VALUE) {
+                
                 sortInMainMemory(inputPath, 
                                  outputPath, 
                                  (int) (inputFileSize / Integer.BYTES));
@@ -84,15 +86,11 @@ public final class ExternalIntMergeSort {
                     "IO failed in main memory sorting: " + ex.getMessage(),
                     ex);
         }
-       
-        System.out.println("external");
         
         // Once here, do the external sorting:
         sortExternally(inputPath,
                        outputPath,
                        inputFileSize);
-        
-        System.out.println("done");
     }
     
     private static void sortExternally(Path inputPath,
@@ -156,7 +154,7 @@ public final class ExternalIntMergeSort {
         }
         
         FileChannel[] channels = new FileChannel[inputPaths.size()];
-        ByteBuffer[]  buffers  = new ByteBuffer [inputPaths.size()];
+        ByteBuffer [] buffers  = new ByteBuffer [inputPaths.size()];
         
         Queue<HeapEntry> heap =
                 new PriorityQueue<>(Comparator.comparingInt(e -> e.key));
@@ -173,15 +171,12 @@ public final class ExternalIntMergeSort {
                 buffers[i].order(ByteOrder.LITTLE_ENDIAN);
                 buffers[i].limit(0);
                 
-                boolean fine = readNextInt(channels[i],
-                                           buffers[i],
-                                           temp, 
-                                           0);
+                readNextInt(channels[i],
+                            buffers[i],
+                            temp, 
+                            0);
                 
-                
-                if (fine) {
-                    heap.add(new HeapEntry(temp[0], i));
-                }
+                heap.add(new HeapEntry(temp[0], i));
             }
             
             try (FileChannel out = 
@@ -216,16 +211,15 @@ public final class ExternalIntMergeSort {
                     
                     if (fine) {
                         heap.add(new HeapEntry(temp[0], e.runIndex));
-                    } 
+                    }
                 }
-                
+                 
                 outBuffer.flip();
                 
                 while (outBuffer.hasRemaining()) {
                     out.write(outBuffer);
                 }
             }
-            
             
         } finally {
             for (FileChannel channel : channels) {
@@ -291,15 +285,7 @@ public final class ExternalIntMergeSort {
                         break;
                     }
                     
-                    if (r == 0) {
-                        continue;
-                    }
-                    
                     bytesReadTotal += r;
-                }
-                
-                if (bytesReadTotal == 0) {
-                    break;
                 }
                 
                 inputBuffer.flip();
@@ -387,8 +373,6 @@ public final class ExternalIntMergeSort {
             buffer.order(ByteOrder.LITTLE_ENDIAN);
             
             while (buffer.hasRemaining()) {
-                // TODO: Add debuging output
-                //System.out.println("A");
                 if (inputChannel.read(buffer) == -1) {
                     break;
                 }
@@ -427,19 +411,11 @@ public final class ExternalIntMergeSort {
         while (buffer.remaining() < Integer.BYTES) {
             buffer.compact();
             
-            int r;
-            
-            do {
-                r = channel.read(buffer);
-            } while (r == 0);
+            int r = channel.read(buffer);
             
             buffer.flip();
             
             if (r == -1) {
-                return false;
-            }
-            
-            if (buffer.remaining() < Integer.BYTES) {
                 return false;
             }
         }
