@@ -14,7 +14,8 @@ import java.util.Objects;
 
 /**
  * This class provides a method for external sorting a binary file containing 
- * {@code int} values in little-endian order.
+ * {@code int} values in little-endian order. The algorithm used is the 
+ * {@code k}-way merge sort.
  */
 public final class ExternalIntMergeSort {
     
@@ -55,6 +56,8 @@ public final class ExternalIntMergeSort {
         }
         
         long freeMem = Runtime.getRuntime().freeMemory();
+        
+        System.out.println("Free memory: " + freeMem);
         long memThreshold = (3L * freeMem) / 4L;
         
         try {
@@ -98,7 +101,7 @@ public final class ExternalIntMergeSort {
         
         try {
             int memorySize = computeMaximumIntsInMemory();
-            
+            System.out.println("memorySize = " + memorySize);
             runs = createSortedRuns(inputPath, 
                                     temporaryDirectory,
                                     memorySize);
@@ -283,7 +286,8 @@ public final class ExternalIntMergeSort {
                     array[i] = inputBuffer.getInt();
                 }
                 
-                Arrays.sort(array, 0, intsRead);
+                System.out.println("sorting "+  intsRead + " ints");
+                Arrays.parallelSort(array, 0, intsRead);
                 
                 Path runFile = 
                         temporaryPath.resolve("run-" + (runIndex++) + ".bin");
@@ -324,6 +328,12 @@ public final class ExternalIntMergeSort {
                     break;
                 }
             }
+        }
+        
+        System.out.println("runs: " + runs.size());
+        
+        for (Path p : runs) {
+            System.out.println(Files.size(p));
         }
         
         return runs;
@@ -374,7 +384,7 @@ public final class ExternalIntMergeSort {
             }
             
             // Sort in the main memory:
-            Arrays.sort(array);
+            Arrays.parallelSort(array);
             
             // Store array[] in outputChannel:
             buffer.clear();
